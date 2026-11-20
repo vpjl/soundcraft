@@ -65,14 +65,21 @@ pub(super) fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
                     crate::sampler_window::sample_strip(app, ui, tid, &ins);
                     ui.add_space(4.0);
                 }
-                if info.id == "eq_7band" || info.id == "eq_1band" {
+                if matches!(info.id, "eq_7band" | "eq_1band" | "tone_eq") {
                     eq_curve(ui, info.id, &ins);
+                }
+                if info.id == "tone_eq" {
+                    tone_knobs(app, ui, tid, slot, info, &ins);
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     egui::Grid::new(("pg", tid.0, slot)).num_columns(3).show(ui, |ui| {
                         // Built-in parameters are translated; a third-party plugin supplies its own names.
                         let localize_params = !soundcraft_mix::is_third_party(&ins.plugin);
                         for p in info.params {
+                            if info.id == "tone_eq" && TONE_KNOBS.contains(&p.id) {
+                                // Shown as the rotary knobs above the grid.
+                                continue;
+                            }
                             let v = ins.params.get(p.id).copied().unwrap_or(p.default);
                             let label_text = if localize_params { crate::localization::text(p.name) } else { p.name };
                             let label = ui.label(label_text);
@@ -154,6 +161,54 @@ pub(super) fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
     app.ui.plugin_windows = keep;
 }
 
+/// Tone EQ parameters drawn as rotary knobs instead of grid sliders.
+const TONE_KNOBS: [&str; 2] = ["bass", "treble"];
+
+/// Maps a parameter value onto a centre-zero knob position (-1..1) and back.
+fn to_knob(v: f32, min: f32, max: f32) -> f32 {
+    if max > min && v.is_finite() { ((v - min) / (max - min) * 2.0 - 1.0).clamp(-1.0, 1.0) } else { 0.0 }
+}
+
+fn from_knob(k: f32, min: f32, max: f32) -> f32 {
+    min + (k.clamp(-1.0, 1.0) + 1.0) * 0.5 * (max - min)
+}
+
+/// Tone EQ: bass and treble as two large rotary knobs side by side, centred on flat (0 dB).
+/// Drag to turn; a double-click returns to flat.
+fn tone_knobs(
+    app: &mut SoundApp,
+    ui: &mut Ui,
+    tid: soundcraft_model::TrackId,
+    slot: usize,
+    info: &soundcraft_dsp::PluginInfo,
+    ins: &soundcraft_model::Insert,
+) {
+    ui.add_space(6.0);
+    ui.columns(TONE_KNOBS.len(), |cols| {
+        for (col, id) in cols.iter_mut().zip(TONE_KNOBS) {
+            let Some(p) = info.params.iter().find(|p| p.id == id) else { continue };
+            let v = ins.params.get(p.id).copied().unwrap_or(p.default);
+            col.vertical_centered(|ui| {
+                let name = crate::localization::text(p.name);
+                ui.label(name);
+                let mut k = to_knob(v, p.min, p.max);
+                let tip = crate::localized_format!("{name} (drag; double-click resets)", name = name);
+                let _ = crate::widgets::pan_knob(ui, 56.0, &mut k, &tip);
+                let x = from_knob(k, p.min, p.max);
+                ui.label(egui::RichText::new(p.format(x)).font(mono(11.0)));
+                if (x - v).abs() > 1e-4 {
+                    let _ = app.engine.execute_merged(
+                        "mix.insert_param",
+                        &json!({"track": tid.0, "slot": slot, "param": p.id, "value": x}),
+                        &format!("param:{}:{slot}:{}", tid.0, p.id),
+                    );
+                }
+            });
+        }
+    });
+    ui.add_space(6.0);
+}
+
 fn eq_curve(ui: &mut Ui, id: &str, ins: &soundcraft_model::Insert) {
     let t = Tokens::current();
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().max(300.0), 110.0), Sense::hover());
@@ -161,10 +216,10 @@ fn eq_curve(ui: &mut Ui, id: &str, ins: &soundcraft_model::Insert) {
     let n = 160;
     let freqs: Vec<f32> = (0..n).map(|i| 20.0 * 1000f32.powf(i as f32 / (n - 1) as f32)).collect();
     let params: Vec<(&str, f32)> = ins.params.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    let resp = if id == "eq_7band" {
-        soundcraft_dsp::eq7_response(&params, &freqs, 48_000.0)
-    } else {
-        soundcraft_dsp::eq1_response(&params, &freqs, 48_000.0)
+    let resp = match id {
+        "eq_7band" => soundcraft_dsp::eq7_response(&params, &freqs, 48_000.0),
+        "tone_eq" => soundcraft_dsp::tone_response(&params, &freqs, 48_000.0),
+        _ => soundcraft_dsp::eq1_response(&params, &freqs, 48_000.0),
     };
     for db in [-12.0f32, 0.0, 12.0] {
         let y = r.center().y - db / 18.0 * r.height() * 0.5;

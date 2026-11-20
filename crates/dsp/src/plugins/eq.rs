@@ -1,4 +1,5 @@
-//! Parametric equalizers: EQ 1-Band and EQ 7-Band (HPF, low shelf, three peaks, high shelf, LPF).
+//! Equalizers: EQ 1-Band, EQ 7-Band (HPF, low shelf, three peaks, high shelf, LPF) and Tone EQ
+//! (broad bass and treble controls in the style of a Baxandall tone stack).
 
 use crate::biquad::{Biquad, Coeffs, FilterType, butterworth_qs};
 use crate::params::{Params, choice, lin, log, toggle};
@@ -59,6 +60,31 @@ pub static EQ1_INFO: PluginInfo = PluginInfo {
     short_name: "EQ1",
     category: Category::Eq,
     params: &EQ1_PARAMS,
+    is_instrument: false,
+    audiosuite: true,
+};
+
+const BASS_FREQS: &[&str] = &["50 Hz", "100 Hz", "200 Hz", "400 Hz"];
+const BASS_HZ: [f32; 4] = [50.0, 100.0, 200.0, 400.0];
+const TREBLE_FREQS: &[&str] = &["2.5 kHz", "5 kHz", "10 kHz", "20 kHz"];
+const TREBLE_HZ: [f32; 4] = [2500.0, 5000.0, 10_000.0, 20_000.0];
+
+static TONE_PARAMS: [ParamInfo; 5] = [
+    lin("bass", "Bass", -15.0, 15.0, 0.0, Unit::Db),
+    choice("bass_freq", "Bass Freq", BASS_FREQS, 1),
+    lin("treble", "Treble", -15.0, 15.0, 0.0, Unit::Db),
+    choice("treble_freq", "Treble Freq", TREBLE_FREQS, 2),
+    lin("output_gain", "Output", -24.0, 24.0, 0.0, Unit::Db),
+];
+
+/// Two broad 6 dB/oct shelves: they cannot make a narrow or steep change, which suits gentle
+/// tonal balance on whole mixes and masters.
+pub static TONE_INFO: PluginInfo = PluginInfo {
+    id: "tone_eq",
+    name: "Tone EQ",
+    short_name: "Tone",
+    category: Category::Eq,
+    params: &TONE_PARAMS,
     is_instrument: false,
     audiosuite: true,
 };
@@ -125,6 +151,24 @@ fn design_eq1(v: &[f32], sr: f32) -> [Coeffs; 1] {
     [Coeffs::design(kind, val(v, 1), val(v, 3), g, sr)]
 }
 
+/// Corner frequency for a choice index; out-of-range or non-finite indices fall back to the default.
+fn corner(table: &[f32; 4], idx: f32, default: usize) -> f32 {
+    let i = if idx.is_finite() { idx.round().clamp(0.0, 3.0) as usize } else { default };
+    table.get(i).or(table.get(default)).copied().unwrap_or(1000.0)
+}
+
+fn design_tone(v: &[f32], sr: f32) -> [Coeffs; 2] {
+    let mut c = [Coeffs::IDENTITY; 2];
+    let (bass, treble) = (val(v, 0), val(v, 2));
+    if bass.abs() > 1e-4 {
+        c[0] = Coeffs::design(FilterType::LowShelf1, corner(&BASS_HZ, val(v, 1), 1), 0.707, bass, sr);
+    }
+    if treble.abs() > 1e-4 {
+        c[1] = Coeffs::design(FilterType::HighShelf1, corner(&TREBLE_HZ, val(v, 3), 2), 0.707, treble, sr);
+    }
+    c
+}
+
 /// Generic smoothed EQ: `S` cascaded sections designed from the parameter values.
 pub struct Eq<const S: usize> {
     info: &'static PluginInfo,
@@ -143,6 +187,8 @@ pub struct Eq<const S: usize> {
 pub type Eq7 = Eq<9>;
 /// EQ 1-Band.
 pub type Eq1 = Eq<1>;
+/// Tone EQ.
+pub type ToneEq = Eq<2>;
 
 impl Eq7 {
     pub fn new() -> Self {
@@ -163,6 +209,18 @@ impl Eq1 {
 }
 
 impl Default for Eq1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ToneEq {
+    pub fn new() -> Self {
+        Eq::build(&TONE_INFO, design_tone, &[4])
+    }
+}
+
+impl Default for ToneEq {
     fn default() -> Self {
         Self::new()
     }
@@ -316,4 +374,9 @@ pub fn eq7_response(params: &[(&str, f32)], freqs: &[f32], sr: f32) -> Vec<f32> 
 /// EQ 1-Band magnitude response in dB at `freqs`.
 pub fn eq1_response(params: &[(&str, f32)], freqs: &[f32], sr: f32) -> Vec<f32> {
     response_from(&EQ1_INFO, &|v, sr| design_eq1(v, sr).to_vec(), &[4], params, freqs, sr)
+}
+
+/// Tone EQ magnitude response in dB at `freqs`.
+pub fn tone_response(params: &[(&str, f32)], freqs: &[f32], sr: f32) -> Vec<f32> {
+    response_from(&TONE_INFO, &|v, sr| design_tone(v, sr).to_vec(), &[4], params, freqs, sr)
 }

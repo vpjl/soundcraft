@@ -1,6 +1,6 @@
 # Plugin parity: built-in processors and plugin hosting
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-09 · **Change:** trivial (Frequency Shifter; previously minor: editors: VST3 and embedded CLAP editors on Linux/X11; previously trivial: Auto Pan stereo balance) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-20 · **Change:** trivial (Tone EQ; previously trivial: Frequency Shifter; previously minor: editors: VST3 and embedded CLAP editors on Linux/X11; previously trivial: Auto Pan stereo balance) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Pro Tools users live in plugins: the bundled set covers everyday mixing, and third-party plugins
 cover the rest. This doc tracks both. Our plugins have our own names and are written from
@@ -13,7 +13,7 @@ scratch (clean-room rule): Avid plugin names are not used here, only categories.
 
 | Category | Pro Tools bundles (approx., by category) | SoundCraft (ids) | Gap |
 |---|---|---|---|
-| EQ | 1-band and 7-band EQ, channel strip, vintage EQ models | `eq_1band`, `eq_7band`, `channel_strip` | Vintage models, linear phase, dynamic EQ; parametric UI (#139) |
+| EQ | 1-band and 7-band EQ, channel strip, vintage EQ models | `eq_1band`, `eq_7band`, `tone_eq`, `channel_strip` | Vintage models, linear phase, dynamic EQ; parametric UI (#139) |
 | Dynamics | compressor/limiter, expander/gate, de-esser, maximizer, vintage compressors, multiband | `compressor`, `expander_gate`, `de_esser`, `maximizer` | Vintage/opto models, multiband, sidechain input (no key input anywhere) |
 | Reverb | algorithmic room/plate/hall; convolution (paid tier) | `room_reverb`, `plate_reverb` | Hall/chamber, convolution, early-reflection editor |
 | Delay | modulated delay, tape/analog delays | `mod_delay` | Tape, ping-pong, multi-tap, tempo-sync depth |
@@ -22,7 +22,7 @@ scratch (clean-room rule): Avid plugin names are not used here, only categories.
 | Pitch and time | pitch shift, varispeed effects, time shift | `pitch_shifter`, `time_shift`; the AudioSuite speed ramp (`speed_ramp`) slows a clip down to a stop or speeds it up from one, fitted to the clip's length or extended to 150 %, with or without a fade. | Formant control, pitch correction |
 | Utility | trim, gain, invert, DC offset, signal generator, dither, time adjuster | `trim`, `gain`, `invert`, `dc_offset_removal`, `signal_generator`, `dither` | Time adjuster, meter/analyzer plugins, noise shaping options |
 | Instruments | several virtual instruments (multi-sampler, piano, drum machine, organ, synths, sample player; Massive X Player added in 2026.4) | `subtractive_synth`, `drum_synth`, `sampler`; `mix.instrument` takes the instrument's parameters in `params` and refuses unknown fields (#265). The sampler's ping-pong loop keeps its phase when a step is wider than the loop (#463). | Piano, organ, wavetable, content library |
-| **Total** | **≈ 80 processors and instruments** (estimate from Avid's bundle documentation) | **28 processors + 3 instruments** | |
+| **Total** | **≈ 80 processors and instruments** (estimate from Avid's bundle documentation) | **29 processors + 3 instruments** | |
 
 AudioSuite: every catalog AudioSuite leaf maps to one of our processes (`AUDIOSUITE` in
 `crates/ui-egui/src/menus.rs`), so the AudioSuite menu is 100 % present. Depth: no preview,
@@ -58,6 +58,7 @@ User report #152: a saved instrument level does not reach the bounce.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-20 | trivial | EQ: Tone EQ (`tone_eq`), broad 6 dB/oct bass and treble shelves; 29 processors + 3 instruments |
 | 2026-11-09 | trivial | Modulation: Frequency Shifter (`freq_shifter`); 28 processors + 3 instruments |
 | 2026-10-27 | minor | Editors: VST3 and embedded CLAP editors on Linux/X11, with the host run loop (VST3 `IRunLoop`, CLAP timer and fd support) (#527) |
 | 2026-10-25 | trivial | Auto Pan: constant-power balance of the left and right channels; stereo passes unchanged at the center |

@@ -200,9 +200,37 @@ fn eq_magnitude_at_center_matches_gain() {
 }
 
 #[test]
+fn tone_eq_shapes_bass_and_treble_broadly() {
+    let sr = SR;
+    let f = [20.0, 100.0, 1000.0, 10_000.0, 18_000.0];
+    // Defaults: flat.
+    assert!(soundcraft_dsp::tone_response(&[], &f, sr).iter().all(|d| d.abs() < 1e-3));
+    // Bass +12 dB at 100 Hz: half the gain at the corner, untouched in the mids.
+    let r = soundcraft_dsp::tone_response(&[("bass", 12.0)], &f, sr);
+    assert!(r[0] > 10.0 && (r[1] - 6.0).abs() < 0.1 && r[2].abs() < 0.2 && r[3].abs() < 0.05, "{r:?}");
+    // Treble −9 dB at 10 kHz, and the corner choice moves it.
+    let r = soundcraft_dsp::tone_response(&[("treble", -9.0)], &f, sr);
+    assert!((r[3] + 4.5).abs() < 0.1 && r[1].abs() < 0.05, "{r:?}");
+    let lower = soundcraft_dsp::tone_response(&[("treble", -9.0), ("treble_freq", 0.0)], &f, sr);
+    assert!(lower[2] < r[2] - 1.0, "{lower:?} vs {r:?}");
+    // Hostile choice values fall back to a valid corner instead of breaking the curve.
+    let odd = soundcraft_dsp::tone_response(&[("bass", 6.0), ("bass_freq", f32::NAN)], &f, sr);
+    assert!(odd.iter().all(|d| d.is_finite()), "{odd:?}");
+
+    // The real-time plugin agrees with the curve.
+    let mut p = prepared("tone_eq");
+    p.set_param("bass", 12.0);
+    p.reset();
+    let x = sine(100.0, 0.1, 48_000);
+    let out = run(p.as_mut(), std::slice::from_ref(&x));
+    let g = gain_to_db(rms(&out[0][24_000..]) / rms(&x[24_000..]));
+    assert!((g - 6.0).abs() < 0.2, "measured {g}");
+}
+
+#[test]
 fn eq_switches_and_choices_apply_to_a_running_eq() {
     // (plugin, settings, the one switch or choice changed while running, test tone)
-    let cases: [(&str, &[(&str, f32)], (&str, f32), f32); 7] = [
+    let cases: [(&str, &[(&str, f32)], (&str, f32), f32); 8] = [
         ("eq_7band", &[("hpf_freq", 2000.0), ("hpf_slope", 3.0)], ("hpf_on", 1.0), 1000.0),
         ("eq_7band", &[("hpf_freq", 2000.0), ("hpf_slope", 3.0), ("hpf_on", 1.0)], ("hpf_on", 0.0), 1000.0),
         ("eq_7band", &[("hpf_freq", 2000.0), ("hpf_slope", 0.0), ("hpf_on", 1.0)], ("hpf_slope", 3.0), 1000.0),
@@ -210,6 +238,7 @@ fn eq_switches_and_choices_apply_to_a_running_eq() {
         ("eq_7band", &[("lpf_freq", 2000.0), ("lpf_slope", 0.0), ("lpf_on", 1.0)], ("lpf_slope", 3.0), 4000.0),
         ("eq_1band", &[("freq", 1000.0)], ("type", 4.0), 10_000.0),
         ("channel_strip", &[("hpf_freq", 2000.0)], ("hpf_on", 1.0), 1000.0),
+        ("tone_eq", &[("treble", -15.0), ("treble_freq", 3.0)], ("treble_freq", 0.0), 4000.0),
     ];
     let mut stale = Vec::new();
     for (id, setup, (key, value), tone) in cases {

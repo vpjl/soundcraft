@@ -20,6 +20,7 @@ use crate::{Plugin, PluginInfo};
 pub(crate) static REGISTRY: &[&PluginInfo] = &[
     &eq::EQ1_INFO,
     &eq::EQ7_INFO,
+    &eq::TONE_INFO,
     &dynamics::COMP_INFO,
     &dynamics::GATE_INFO,
     &dynamics::DEESS_INFO,
@@ -56,6 +57,7 @@ pub(crate) fn instantiate(id: &str) -> Option<Box<dyn Plugin>> {
     Some(match id {
         "eq_1band" => Box::new(eq::Eq1::new()),
         "eq_7band" => Box::new(eq::Eq7::new()),
+        "tone_eq" => Box::new(eq::ToneEq::new()),
         "compressor" => Box::new(dynamics::Compressor::new()),
         "expander_gate" => Box::new(dynamics::ExpanderGate::new()),
         "de_esser" => Box::new(dynamics::DeEsser::new()),

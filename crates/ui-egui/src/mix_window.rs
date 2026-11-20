@@ -336,15 +336,15 @@ fn eq_section(ui: &mut Ui, cx: &StripCtx<'_>, mut y: f32) -> f32 {
     if cx.shows("eq_curve") {
         let sec = Rect::from_min_size(pos2(x0, y), vec2(inner_w, 40.0));
         ui.painter().rect_filled(sec, 2.0, Color32::from_rgb(14, 18, 22));
-        let eq = track.mixer.inserts.iter().flatten().find(|i| i.plugin == "eq_7band" || i.plugin == "eq_1band");
+        let eq = track.mixer.inserts.iter().flatten().find(|i| matches!(i.plugin.as_str(), "eq_7band" | "eq_1band" | "tone_eq"));
         if let Some(ins) = eq {
             let n = 40;
             let freqs: Vec<f32> = (0..n).map(|i| 20.0 * 1000f32.powf(i as f32 / (n - 1) as f32)).collect();
             let params: Vec<(&str, f32)> = ins.params.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-            let resp = if ins.plugin == "eq_7band" {
-                soundcraft_dsp::eq7_response(&params, &freqs, 48_000.0)
-            } else {
-                soundcraft_dsp::eq1_response(&params, &freqs, 48_000.0)
+            let resp = match ins.plugin.as_str() {
+                "eq_7band" => soundcraft_dsp::eq7_response(&params, &freqs, 48_000.0),
+                "tone_eq" => soundcraft_dsp::tone_response(&params, &freqs, 48_000.0),
+                _ => soundcraft_dsp::eq1_response(&params, &freqs, 48_000.0),
             };
             let pts: Vec<egui::Pos2> = resp
                 .iter()

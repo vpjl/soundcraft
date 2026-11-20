@@ -1,5 +1,5 @@
 //! Second-order IIR filters designed from the RBJ "Audio EQ Cookbook" formulas, plus first-order
-//! low/high-pass sections (bilinear transform) for 6 dB/oct slopes.
+//! low/high-pass and shelving sections (bilinear transform) for 6 dB/oct slopes.
 
 use std::f64::consts::PI;
 
@@ -20,6 +20,12 @@ pub enum FilterType {
     LowPass1,
     /// First-order (6 dB/oct) high-pass; `q` and `gain_db` are ignored.
     HighPass1,
+    /// First-order (6 dB/oct) low shelf: `gain_db` below, unity above, half the gain at `freq`;
+    /// `q` is ignored. A cut mirrors the boost of the same size.
+    LowShelf1,
+    /// First-order (6 dB/oct) high shelf: `gain_db` above, unity below, half the gain at `freq`;
+    /// `q` is ignored. A cut mirrors the boost of the same size.
+    HighShelf1,
 }
 
 /// Normalized biquad coefficients (`a0 = 1`).
@@ -92,6 +98,19 @@ impl Coeffs {
                 } else {
                     Coeffs { b0: norm as f32, b1: -norm as f32, b2: 0.0, a1: a1 as f32, a2: 0.0 }
                 };
+            }
+            FilterType::LowShelf1 | FilterType::HighShelf1 => {
+                // Bilinear transform (prewarped at `freq`) of (s + √G)/(s + 1/√G) for the low
+                // shelf and (√G·s + 1)/(s/√G + 1) for the high shelf: the zero and pole sit
+                // symmetrically about the corner, so `freq` is the half-gain point.
+                let k = (w0 / 2.0).tan();
+                let r = 10f64.powf(g / 40.0);
+                let (b0, b1, a0, a1) = if kind == FilterType::LowShelf1 {
+                    (1.0 + k * r, k * r - 1.0, 1.0 + k / r, k / r - 1.0)
+                } else {
+                    (r + k, k - r, 1.0 / r + k, k - 1.0 / r)
+                };
+                (b0, b1, 0.0, a0, a1, 0.0)
             }
         };
         let c = Coeffs { b0: (b0 / a0) as f32, b1: (b1 / a0) as f32, b2: (b2 / a0) as f32, a1: (a1 / a0) as f32, a2: (a2 / a0) as f32 };
@@ -196,6 +215,33 @@ mod tests {
         assert!((c.magnitude_db(1000.0, 48_000.0) + 3.01).abs() < 0.05);
         let c1 = Coeffs::design(FilterType::HighPass1, 1000.0, 0.0, 0.0, 48_000.0);
         assert!((c1.magnitude_db(1000.0, 48_000.0) + 3.01).abs() < 0.05);
+    }
+
+    #[test]
+    fn first_order_shelves_are_gentle_and_symmetric() {
+        let sr = 48_000.0;
+        for (kind, far, near) in [(FilterType::LowShelf1, 5.0, 20_000.0), (FilterType::HighShelf1, 20_000.0, 5.0)] {
+            let fc = if kind == FilterType::LowShelf1 { 100.0 } else { 2500.0 };
+            let boost = Coeffs::design(kind, fc, 0.0, 12.0, sr);
+            let cut = Coeffs::design(kind, fc, 0.0, -12.0, sr);
+            // Half the gain at the corner, (almost) the full gain far away, unity on the other side.
+            assert!((boost.magnitude_db(fc, sr) - 6.0).abs() < 0.05, "{kind:?}");
+            assert!(boost.magnitude_db(far, sr) > 11.0, "{kind:?}");
+            assert!(boost.magnitude_db(near, sr).abs() < 0.5, "{kind:?}");
+            // A cut is the exact mirror of the boost.
+            for f in [20.0, 200.0, 1000.0, 2500.0, 8000.0, 16_000.0] {
+                assert!((boost.magnitude_db(f, sr) + cut.magnitude_db(f, sr)).abs() < 0.01, "{kind:?} at {f}");
+            }
+            // No steeper than a first-order slope: under 6 dB per octave anywhere.
+            let mut f = 20.0f32;
+            while f < 10_000.0 {
+                assert!((boost.magnitude_db(f * 2.0, sr) - boost.magnitude_db(f, sr)).abs() < 6.0, "{kind:?} at {f}");
+                f *= 2.0;
+            }
+        }
+        // Zero gain is a pass-through.
+        let flat = Coeffs::design(FilterType::HighShelf1, 5000.0, 0.0, 0.0, sr);
+        assert!(flat.magnitude_db(15_000.0, sr).abs() < 1e-4);
     }
 
     #[test]
