@@ -270,6 +270,135 @@ pub fn pan_knob(ui: &mut Ui, size: f32, value: &mut f32, tip: &str) -> Response 
     resp.on_hover_text(tip)
 }
 
+/// A rotary knob for a plug-in parameter, worked on its position along the parameter's travel
+/// (0 to 1), so a log-taper frequency turns as evenly as a gain.
+///
+/// Drag up or right to turn it clockwise; with Ctrl (Command on a Mac) held it turns a tenth as
+/// far, as a [`FineSlider`] does. A double-click or an Alt-click (Option-click on a Mac) returns it
+/// to `default`, and a drag with Alt held leaves it where it is. With the keyboard focus, the
+/// arrow keys step it by a hundredth of its travel (a thousandth with Ctrl). A `bipolar` knob, such
+/// as a gain, lights its arc from the top (flat) towards the value; the others light it from the
+/// lowest value.
+pub struct ParamKnob<'a> {
+    pos: &'a mut f32,
+    default: f32,
+    name: &'a str,
+    value_text: &'a str,
+    size: f32,
+    bipolar: bool,
+    color: Option<Color32>,
+}
+
+impl<'a> ParamKnob<'a> {
+    /// `name` is the accessible name and the tooltip; `value_text` is published as the current
+    /// value for a screen reader.
+    pub fn new(pos: &'a mut f32, default: f32, name: &'a str, value_text: &'a str) -> Self {
+        Self { pos, default, name, value_text, size: 40.0, bipolar: false, color: None }
+    }
+
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = size;
+        self
+    }
+
+    pub fn bipolar(mut self, bipolar: bool) -> Self {
+        self.bipolar = bipolar;
+        self
+    }
+
+    /// The colour of the lit arc; the counter colour by default.
+    pub fn color(mut self, color: Color32) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Response {
+        let Self { pos, default, name, value_text, size, bipolar, color } = self;
+        let t = Tokens::current();
+        let (r, mut resp) = ui.allocate_exact_size(vec2(size, size), Sense::click_and_drag());
+        resp.widget_info(|| {
+            let mut info = egui::WidgetInfo::slider(ui.is_enabled(), f64::from(*pos), name);
+            info.current_text_value = Some(value_text.to_string());
+            info
+        });
+        let before = *pos;
+        let (fine, alt) = ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.alt));
+        let scale = if fine { 0.1 } else { 1.0 };
+        if resp.dragged() && !alt {
+            let d = resp.drag_delta();
+            // A full turn for about 200 points of travel.
+            *pos += (d.x - d.y) * 0.005 * scale;
+        }
+        if resp.has_focus() {
+            let step = 0.01 * scale;
+            ui.input(|i| {
+                for (key, dir) in
+                    [(egui::Key::ArrowUp, 1.0), (egui::Key::ArrowRight, 1.0), (egui::Key::ArrowDown, -1.0), (egui::Key::ArrowLeft, -1.0)]
+                {
+                    if i.key_pressed(key) {
+                        *pos += step * dir;
+                    }
+                }
+            });
+        }
+        if resp.double_clicked() || (alt && resp.clicked()) {
+            *pos = default;
+        }
+        *pos = pos.clamp(0.0, 1.0);
+        if *pos != before {
+            resp.mark_changed();
+        }
+
+        let p = ui.painter();
+        let c = r.center();
+        let rad = size * 0.38;
+        let start = std::f32::consts::PI * 0.75;
+        let sweep = std::f32::consts::PI * 1.5;
+        let ring = rad + size * 0.07;
+        let arc = |a0: f32, a1: f32| -> Vec<egui::Pos2> {
+            let n = 32;
+            (0..=n).map(|i| c + egui::Vec2::angled(a0 + (a1 - a0) * i as f32 / n as f32) * ring).collect()
+        };
+        let at = start + sweep * *pos;
+        let from = if bipolar { start + sweep * 0.5 } else { start };
+        let (a0, a1) = if at < from { (at, from) } else { (from, at) };
+        let width = (size * 0.06).max(2.0);
+        p.add(egui::Shape::line(arc(start, start + sweep), Stroke::new(width, t.meter_bg)));
+        if a1 - a0 > 1e-3 {
+            p.add(egui::Shape::line(arc(a0, a1), Stroke::new(width, color.unwrap_or(t.counter_text))));
+        }
+        p.circle_filled(c + vec2(0.0, 1.0), rad, Color32::from_black_alpha(90));
+        rounded_vgradient(p, Rect::from_center_size(c, Vec2::splat(2.0 * rad)), 2.0 * rad, shade(t.knob_bg, 0.14), shade(t.knob_bg, -0.2));
+        p.circle_stroke(c, rad - 0.75, Stroke::new(1.5, if resp.hovered() || resp.dragged() { t.accent } else { t.knob_ring }));
+        if resp.has_focus() {
+            p.circle_stroke(c, ring + width, Stroke::new(1.0, t.accent));
+        }
+        let d = egui::Vec2::angled(at);
+        p.line_segment([c + d * rad * 0.2, c + d * (rad - 2.5)], Stroke::new(2.0, t.knob_pointer));
+        resp.on_hover_text(name)
+    }
+}
+
+/// An on/off switch: a pill with a sliding thumb, lit in `on_color` when on. A click flips it.
+/// `name` is the accessible name and the tooltip.
+pub fn switch(ui: &mut Ui, on: &mut bool, on_color: Color32, name: &str) -> Response {
+    let t = Tokens::current();
+    let h = ui.spacing().interact_size.y.clamp(14.0, 18.0);
+    let (r, mut resp) = ui.allocate_exact_size(vec2(h * 1.8, h), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Switch, ui.is_enabled(), *on, name));
+    let k = ui.ctx().animate_bool_responsive(resp.id, *on);
+    let p = ui.painter();
+    let fill = if *on { on_color } else { t.meter_bg };
+    p.rect(r, h * 0.5, fill, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.button_border }), StrokeKind::Inside);
+    let x = egui::lerp((r.left() + h * 0.5)..=(r.right() - h * 0.5), k);
+    p.circle_filled(pos2(x, r.center().y), h * 0.5 - 2.5, if *on { Color32::WHITE } else { t.text_dim });
+    resp.on_hover_text(name)
+}
+
 /// Format a pan value like a console: "<45", "0", "45>".
 pub fn pan_text(v: f32) -> String {
     let n = (v * 100.0).round() as i32;

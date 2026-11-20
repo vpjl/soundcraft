@@ -91,20 +91,29 @@ fn insert_param(h: &Harness<'_, SoundApp>, track: TrackId, slot: usize, p: &Para
     f64::from(ins.unwrap().params.get(p.id).copied().unwrap_or(p.default))
 }
 
-#[test]
-fn plugin_window_sliders_move_a_tenth_as_far_with_ctrl_held() {
+/// The demo session with an EQ 1-Band in Kick's third insert, its window open; the EQ 7-Band
+/// in the first insert draws knobs instead of sliders.
+fn kick_eq1() -> (SoundApp, TrackId) {
     let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
     let kick = app.engine.session().track_by_name("Kick").unwrap().id;
-    app.ui.plugin_windows = vec![(kick, 0)];
+    app.run("mix.insert", json!({"track": kick.0, "slot": 2, "plugin": "eq_1band"})).unwrap();
+    app.engine.end_merge();
+    app.ui.plugin_windows = vec![(kick, 2)];
+    (app, kick)
+}
+
+#[test]
+fn plugin_window_sliders_move_a_tenth_as_far_with_ctrl_held() {
+    let (app, kick) = kick_eq1();
     let mut h = harness(app);
-    let rails = window_sliders(&h, Id::unique(("plugin", kick.0, 0usize)));
-    let params = slider_params("eq_7band");
-    assert_eq!((params[0].id, params[2].id), ("input_gain", "hpf_freq"));
-    for i in [0, 2] {
+    let rails = window_sliders(&h, Id::unique(("plugin", kick.0, 2usize)));
+    let params = slider_params("eq_1band");
+    assert_eq!((params[1].id, params[0].id), ("gain", "freq"));
+    for i in [1, 0] {
         let p = params[i];
         // Along the rail, so that a log-taper parameter compares as a linear one does.
-        let read = move |h: &Harness<'_, SoundApp>| f64::from(p.to_normalized(insert_param(h, kick, 0, p) as f32));
-        let others = |h: &Harness<'_, SoundApp>| params.iter().filter(|o| o.id != p.id).map(|o| insert_param(h, kick, 0, o)).collect::<Vec<_>>();
+        let read = move |h: &Harness<'_, SoundApp>| f64::from(p.to_normalized(insert_param(h, kick, 2, p) as f32));
+        let others = |h: &Harness<'_, SoundApp>| params.iter().filter(|o| o.id != p.id).map(|o| insert_param(h, kick, 2, o)).collect::<Vec<_>>();
         let before = others(&h);
         assert_tenth(p.name, plain_and_fine(&mut h, rails[i], &read), 0.08..=0.12);
         assert_eq!(others(&h), before, "dragging {} moved another parameter", p.name);
@@ -113,15 +122,13 @@ fn plugin_window_sliders_move_a_tenth_as_far_with_ctrl_held() {
 
 #[test]
 fn the_control_key_alone_also_gives_a_fine_drag_on_a_plugin_slider() {
-    let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
-    let kick = app.engine.session().track_by_name("Kick").unwrap().id;
-    app.ui.plugin_windows = vec![(kick, 0)];
+    let (app, kick) = kick_eq1();
     let mut h = harness(app);
-    let rails = window_sliders(&h, Id::unique(("plugin", kick.0, 0usize)));
-    let p = slider_params("eq_7band")[0];
-    let read = move |h: &Harness<'_, SoundApp>| insert_param(h, kick, 0, p);
-    let plain = drag(&mut h, rails[0], 30.0, Modifiers::NONE, &read);
-    let fine = drag(&mut h, rails[0], 30.0, Modifiers::CTRL, &read);
+    let rails = window_sliders(&h, Id::unique(("plugin", kick.0, 2usize)));
+    let p = slider_params("eq_1band")[1];
+    let read = move |h: &Harness<'_, SoundApp>| insert_param(h, kick, 2, p);
+    let plain = drag(&mut h, rails[1], 30.0, Modifiers::NONE, &read);
+    let fine = drag(&mut h, rails[1], 30.0, Modifiers::CTRL, &read);
     assert_tenth(p.name, (plain, fine), 0.08..=0.12);
 }
 
@@ -150,16 +157,14 @@ fn toggle_ctrl_during_a_drag(h: &mut Harness<'_, SoundApp>, what: &str, rail: Re
 
 #[test]
 fn pressing_and_releasing_ctrl_during_a_drag_keeps_the_value_of_a_logarithmic_slider() {
-    let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
-    let kick = app.engine.session().track_by_name("Kick").unwrap().id;
-    app.ui.plugin_windows = vec![(kick, 0)];
+    let (app, kick) = kick_eq1();
     let mut h = harness(app);
-    let rails = window_sliders(&h, Id::unique(("plugin", kick.0, 0usize)));
-    let p = slider_params("eq_7band")[2];
-    assert_eq!(p.id, "hpf_freq");
-    let read = move |h: &Harness<'_, SoundApp>| f64::from(p.to_normalized(insert_param(h, kick, 0, p) as f32));
-    let plain = drag(&mut h, rails[2], 30.0, Modifiers::NONE, &read);
-    toggle_ctrl_during_a_drag(&mut h, p.name, rails[2], plain, &read);
+    let rails = window_sliders(&h, Id::unique(("plugin", kick.0, 2usize)));
+    let p = slider_params("eq_1band")[0];
+    assert_eq!(p.id, "freq");
+    let read = move |h: &Harness<'_, SoundApp>| f64::from(p.to_normalized(insert_param(h, kick, 2, p) as f32));
+    let plain = drag(&mut h, rails[0], 30.0, Modifiers::NONE, &read);
+    toggle_ctrl_during_a_drag(&mut h, p.name, rails[0], plain, &read);
 }
 
 #[test]

@@ -95,83 +95,90 @@ fn undo_steps(h: &Harness<'_, SoundApp>) -> usize {
     h.state().engine.undo_history().len()
 }
 
-/// Kick's EQ 7-Band window, with Input at 6 dB and HPF Slope on its last choice.
+/// An EQ 1-Band window in Kick's third insert, with Gain at 6 dB and Type on its last choice.
+/// (The EQ 7-Band draws knobs instead of sliders.)
 fn kick_eq() -> (Harness<'static, SoundApp>, TrackId) {
     let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
     let kick = app.engine.session().track_by_name("Kick").unwrap().id;
-    let slope = param("eq_7band", "hpf_slope");
-    app.run("mix.insert_param", json!({"track": kick.0, "slot": 0, "param": "input_gain", "value": 6.0})).unwrap();
-    app.run("mix.insert_param", json!({"track": kick.0, "slot": 0, "param": "hpf_slope", "value": slope.max})).unwrap();
+    let kind = param("eq_1band", "type");
+    app.run("mix.insert", json!({"track": kick.0, "slot": 2, "plugin": "eq_1band"})).unwrap();
+    app.run("mix.insert_param", json!({"track": kick.0, "slot": 2, "param": "gain", "value": 6.0})).unwrap();
+    app.run("mix.insert_param", json!({"track": kick.0, "slot": 2, "param": "type", "value": kind.max})).unwrap();
     app.engine.end_merge();
-    app.ui.plugin_windows = vec![(kick, 0)];
+    app.ui.plugin_windows = vec![(kick, 2)];
     (harness(app), kick)
+}
+
+/// The rail of the EQ 1-Band's Gain slider (its second, after Freq).
+fn gain_rail(h: &Harness<'_, SoundApp>, kick: TrackId) -> Rect {
+    window_sliders(h, Id::unique(("plugin", kick.0, 2usize)))[1]
 }
 
 #[test]
 fn alt_click_returns_a_plugin_window_slider_to_its_default_in_one_undo_step() {
     let (mut h, kick) = kick_eq();
-    let input = param("eq_7band", "input_gain");
+    let input = param("eq_1band", "gain");
     assert_ne!(input.default, 6.0);
-    let rail = window_sliders(&h, Id::unique(("plugin", kick.0, 0usize)))[0];
+    let rail = gain_rail(&h, kick);
     let steps = undo_steps(&h);
     alt_press(&mut h, near_left(rail), 0.0);
-    assert_eq!(insert_param(&h, kick, 0, input), input.default, "Alt-click did not return Input to its default");
+    assert_eq!(insert_param(&h, kick, 2, input), input.default, "Alt-click did not return Gain to its default");
     assert_eq!(undo_steps(&h), steps + 1, "Alt-click is not one undo step");
     h.state_mut().engine.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(insert_param(&h, kick, 0, input), 6.0, "Undo did not bring Input back");
+    assert_eq!(insert_param(&h, kick, 2, input), 6.0, "Undo did not bring Gain back");
 }
 
 #[test]
 fn alt_drag_leaves_a_plugin_window_slider_where_it_is() {
     let (mut h, kick) = kick_eq();
-    let input = param("eq_7band", "input_gain");
-    let rail = window_sliders(&h, Id::unique(("plugin", kick.0, 0usize)))[0];
+    let input = param("eq_1band", "gain");
+    let rail = gain_rail(&h, kick);
     let steps = undo_steps(&h);
     alt_press(&mut h, near_left(rail), 40.0);
-    assert_eq!(insert_param(&h, kick, 0, input), 6.0, "an Alt-drag moved Input");
+    assert_eq!(insert_param(&h, kick, 2, input), 6.0, "an Alt-drag moved Gain");
     assert_eq!(undo_steps(&h), steps, "an Alt-drag added an undo step");
 }
 
 #[test]
 fn alt_click_returns_a_plugin_window_choice_to_its_default_without_opening_the_list() {
     let (mut h, kick) = kick_eq();
-    let slope = param("eq_7band", "hpf_slope");
+    let slope = param("eq_1band", "type");
     assert_ne!(slope.default, slope.max);
-    let row = h.get_by_label("HPF Slope").rect();
+    let row = h.get_by_label("Type").rect();
     let combo = h.query_all_by_role(Role::ComboBox).map(|n| n.rect()).find(|r| (r.center().y - row.center().y).abs() < 4.0).unwrap();
     let steps = undo_steps(&h);
     alt_press(&mut h, combo.center(), 0.0);
-    assert_eq!(insert_param(&h, kick, 0, slope), slope.default, "Alt-click did not return HPF Slope to its default");
+    assert_eq!(insert_param(&h, kick, 2, slope), slope.default, "Alt-click did not return Type to its default");
     assert!(!egui::Popup::is_any_open(&h.ctx), "Alt-click opened the list");
     assert_eq!(undo_steps(&h), steps + 1, "Alt-click is not one undo step");
     h.state_mut().engine.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(insert_param(&h, kick, 0, slope), slope.max, "Undo did not bring HPF Slope back");
+    assert_eq!(insert_param(&h, kick, 2, slope), slope.max, "Undo did not bring Type back");
 }
 
 #[test]
 fn alt_pressed_during_a_drag_holds_the_value_and_the_drag_goes_on_from_there() {
     let (mut h, kick) = kick_eq();
-    let input = param("eq_7band", "input_gain");
-    let from = window_sliders(&h, Id::unique(("plugin", kick.0, 0usize)))[0].center();
+    let input = param("eq_1band", "gain");
+    let from = gain_rail(&h, kick).center();
     move_to(&mut h, from);
     press(&mut h, from, true, Modifiers::NONE);
-    let pressed = insert_param(&h, kick, 0, input);
+    let pressed = insert_param(&h, kick, 2, input);
     move_to(&mut h, from + vec2(10.0, 0.0));
-    let before = insert_param(&h, kick, 0, input);
-    assert!(before > pressed, "a plain drag did not move Input");
+    let before = insert_param(&h, kick, 2, input);
+    assert!(before > pressed, "a plain drag did not move Gain");
     hold(&mut h, Modifiers::ALT);
-    assert_eq!(insert_param(&h, kick, 0, input), before, "pressing Alt moved Input");
+    assert_eq!(insert_param(&h, kick, 2, input), before, "pressing Alt moved Gain");
     for i in 1..=6 {
         move_to(&mut h, from + vec2(10.0 + 5.0 * i as f32, 0.0));
     }
-    assert_eq!(insert_param(&h, kick, 0, input), before, "a drag with Alt held moved Input");
+    assert_eq!(insert_param(&h, kick, 2, input), before, "a drag with Alt held moved Gain");
     hold(&mut h, Modifiers::NONE);
-    assert_eq!(insert_param(&h, kick, 0, input), before, "releasing Alt moved Input to the pointer");
+    assert_eq!(insert_param(&h, kick, 2, input), before, "releasing Alt moved Gain to the pointer");
     move_to(&mut h, from + vec2(50.0, 0.0));
-    let moved = insert_param(&h, kick, 0, input) - before;
+    let moved = insert_param(&h, kick, 2, input) - before;
     press(&mut h, from + vec2(50.0, 0.0), false, Modifiers::NONE);
     let ratio = moved / (before - pressed);
-    assert!((0.8..=1.2).contains(&ratio), "10 points after Alt moved Input {moved}, 10 points before it {}", before - pressed);
+    assert!((0.8..=1.2).contains(&ratio), "10 points after Alt moved Gain {moved}, 10 points before it {}", before - pressed);
 }
 
 /// Kick's compressor window, with Attack away from its default.

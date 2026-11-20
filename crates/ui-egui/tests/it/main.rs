@@ -18,6 +18,7 @@ mod docking_workflows;
 mod edit_menu;
 mod edit_modes;
 mod edit_window_headers;
+mod eq7_panel;
 mod focused_dialog_buttons;
 mod group_dialog;
 mod hide_floating;

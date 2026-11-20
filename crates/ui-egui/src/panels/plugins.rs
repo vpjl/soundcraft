@@ -16,11 +16,12 @@ pub(super) fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
         let Some(info) = crate::mix_window::plugin_info(&ins.plugin) else { continue };
         let place = if instrument { "instrument".to_string() } else { char::from(b'a'.saturating_add(slot as u8)).to_string() };
         let mut open = true;
+        let width = if info.id == "eq_7band" { super::eq7::EQ7_WIDTH } else { 340.0 };
         let shown = egui::Window::new(format!("{tname} · {place} · {}", info.name))
             .id(egui::Id::unique(("plugin", tid.0, slot)))
             .open(&mut open)
-            .default_width(340.0)
-            .default_pos(egui::pos2(ctx.content_rect().width() - 380.0, 120.0))
+            .default_width(width)
+            .default_pos(egui::pos2((ctx.content_rect().width() - width - 40.0).max(8.0), 120.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     // Bypass and presets act on insert slots.
@@ -67,6 +68,11 @@ pub(super) fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
                 }
                 if info.id == "eq_7band" || info.id == "eq_1band" {
                     eq_curve(ui, info.id, &ins);
+                }
+                if info.id == "eq_7band" {
+                    // Tall enough for every knob on a usual screen; a short one scrolls.
+                    egui::ScrollArea::vertical().min_scrolled_height(460.0).show(ui, |ui| super::eq7::eq7_panel(app, ui, tid, slot, info, &ins));
+                    return;
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     egui::Grid::new(("pg", tid.0, slot)).num_columns(3).show(ui, |ui| {
@@ -155,7 +161,6 @@ pub(super) fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
 }
 
 fn eq_curve(ui: &mut Ui, id: &str, ins: &soundcraft_model::Insert) {
-    let t = Tokens::current();
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().max(300.0), 110.0), Sense::hover());
     ui.painter().rect_filled(r, 4.0, Color32::from_rgb(14, 18, 22));
     let n = 160;
@@ -166,16 +171,46 @@ fn eq_curve(ui: &mut Ui, id: &str, ins: &soundcraft_model::Insert) {
     } else {
         soundcraft_dsp::eq1_response(&params, &freqs, 48_000.0)
     };
+    // Frequencies run from 20 Hz to 20 kHz on a log scale, gains over ±18 dB.
+    let fx = |f: f32| r.min.x + r.width() * ((f / 20.0).max(1.0).ln() / 1000f32.ln()).clamp(0.0, 1.0);
+    let fy = |db: f32| r.center().y - db.clamp(-18.0, 18.0) / 18.0 * r.height() * 0.5;
+    let grid = Stroke::new(1.0, Color32::from_rgb(40, 50, 60));
+    let label = Color32::from_rgb(110, 122, 134);
+    let small = egui::FontId::proportional(10.0);
     for db in [-12.0f32, 0.0, 12.0] {
-        let y = r.center().y - db / 18.0 * r.height() * 0.5;
-        ui.painter().line_segment([pos2(r.min.x, y), pos2(r.max.x, y)], Stroke::new(1.0, Color32::from_rgb(40, 50, 60)));
+        ui.painter().line_segment([pos2(r.min.x, fy(db)), pos2(r.max.x, fy(db))], grid);
+        let text = if db > 0.0 { format!("+{db:.0}") } else { format!("{db:.0}") };
+        ui.painter().text(pos2(r.min.x + 3.0, fy(db) - 1.0), egui::Align2::LEFT_BOTTOM, text, small.clone(), label);
     }
-    let pts: Vec<egui::Pos2> = resp
-        .iter()
-        .enumerate()
-        .map(|(i, db)| pos2(r.min.x + r.width() * i as f32 / (n - 1) as f32, r.center().y - db.clamp(-18.0, 18.0) / 18.0 * r.height() * 0.5))
-        .collect();
-    ui.painter().add(egui::Shape::line(pts, Stroke::new(2.0, t.counter_text)));
+    for (f, text) in [(100.0f32, "100"), (1000.0, "1k"), (10_000.0, "10k")] {
+        ui.painter().line_segment([pos2(fx(f), r.min.y), pos2(fx(f), r.max.y)], grid);
+        ui.painter().text(pos2(fx(f) + 3.0, r.max.y - 2.0), egui::Align2::LEFT_BOTTOM, text, small.clone(), label);
+    }
+    let pts: Vec<egui::Pos2> = resp.iter().zip(&freqs).map(|(db, f)| pos2(fx(*f), fy(*db))).collect();
+    // The curve's ground is dark in both themes, so the line keeps one bright colour.
+    ui.painter().add(egui::Shape::line(pts, Stroke::new(2.0, Color32::from_rgb(96, 214, 120))));
+    if id == "eq_7band" {
+        // A dot in each band's colour where it acts: filled when it changes the sound, hollow
+        // when its gain is flat, and none for a filter that is off.
+        let value = |k: &str| {
+            ins.params
+                .get(k)
+                .copied()
+                .or_else(|| soundcraft_dsp::plugin_info(id)?.params.iter().find(|p| p.id == k).map(|p| p.default))
+                .unwrap_or(0.0)
+        };
+        for band in &super::eq7::EQ7_BANDS {
+            let (Some(col), Some((f, gain, true))) = (band.color, super::eq7::marker(band, value)) else { continue };
+            let db = soundcraft_dsp::eq7_response(&params, &[f], 48_000.0).first().copied().unwrap_or(0.0);
+            let at = pos2(fx(f), fy(db));
+            if gain.is_some_and(|g| g.abs() < 0.05) {
+                ui.painter().circle_stroke(at, 4.0, Stroke::new(1.5, col));
+            } else {
+                ui.painter().circle_filled(at, 4.5, col);
+                ui.painter().circle_stroke(at, 4.5, Stroke::new(1.0, Color32::from_black_alpha(160)));
+            }
+        }
+    }
 }
 
 /// Folder for a plugin's user presets.

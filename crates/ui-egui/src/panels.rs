@@ -8,6 +8,7 @@ use soundcraft_model::{ClipId, SourceId};
 
 mod about;
 mod clips;
+mod eq7;
 mod history;
 mod memory;
 mod plugins;
