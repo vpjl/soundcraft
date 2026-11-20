@@ -70,8 +70,10 @@ pub(super) fn plugin_windows(app: &mut SoundApp, ctx: &egui::Context) {
                     eq_curve(ui, info.id, &ins);
                 }
                 if info.id == "eq_7band" {
-                    // Tall enough for every knob on a usual screen; a short one scrolls.
-                    egui::ScrollArea::vertical().min_scrolled_height(460.0).show(ui, |ui| super::eq7::eq7_panel(app, ui, tid, slot, info, &ins));
+                    // Tall enough for every knob on a usual screen. On a short one the window
+                    // keeps its bottom on screen and the knobs scroll.
+                    let tall = (ctx.content_rect().height() - 360.0).clamp(120.0, 460.0);
+                    egui::ScrollArea::vertical().min_scrolled_height(tall).show(ui, |ui| super::eq7::eq7_panel(app, ui, tid, slot, info, &ins));
                     return;
                 }
                 egui::ScrollArea::vertical().show(ui, |ui| {
